@@ -1,0 +1,229 @@
+name: Build DMG Packages
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# 添加必要的权限配置
+permissions:
+  contents: write  # 需要写入权限来创建release
+  packages: write  # 可选：如果需要发布package
+  actions: read    # 需要读取actions的权限
+
+env:
+  SCHEME: breathe
+  APP_NAME: breathe
+
+jobs:
+  build:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+        include:
+          - arch: x86_64
+            destination: 'platform=macOS,arch=x86_64'
+            runner_arch: intel
+          - arch: arm64
+            destination: 'platform=macOS,arch=arm64'
+            runner_arch: apple_silicon
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Show Xcode version
+      run: xcodebuild -version
+
+    - name: Show available schemes
+      run: xcodebuild -list -project breathe.xcodeproj
+
+    - name: Build for ${{ matrix.arch }}
+      run: |
+        xcodebuild clean build \
+          -project breathe.xcodeproj \
+          -scheme ${{ env.SCHEME }} \
+          -configuration Release \
+          -destination '${{ matrix.destination }}' \
+          -derivedDataPath DerivedData \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGN_ENTITLEMENTS="" \
+          PROVISIONING_PROFILE_SPECIFIER=""
+
+    - name: Find built app
+      id: find_app
+      run: |
+        APP_PATH=$(find DerivedData/Build/Products/Release -name "${{ env.APP_NAME }}.app" -type d | head -1)
+        echo "APP_PATH=$APP_PATH" >> $GITHUB_OUTPUT
+        echo "Found app at: $APP_PATH"
+        ls -la "$APP_PATH"
+
+    - name: Verify app architecture
+      run: |
+        APP_PATH="${{ steps.find_app.outputs.APP_PATH }}"
+        BINARY_PATH="$APP_PATH/Contents/MacOS/${{ env.APP_NAME }}"
+        
+        if [ -f "$BINARY_PATH" ]; then
+          echo "Binary architecture info:"
+          file "$BINARY_PATH"
+          lipo -info "$BINARY_PATH" || echo "Single architecture binary"
+        else
+          echo "Warning: Binary not found at $BINARY_PATH"
+          find "$APP_PATH" -type f -name "${{ env.APP_NAME }}" -exec file {} \;
+        fi
+
+    - name: Create temporary DMG directory
+      run: |
+        mkdir -p dmg_temp
+        cp -R "${{ steps.find_app.outputs.APP_PATH }}" dmg_temp/
+        # Create Applications folder symlink for easy installation
+        ln -s /Applications dmg_temp/Applications
+
+    - name: Create DMG for ${{ matrix.arch }}
+      id: create_dmg
+      run: |
+        DMG_NAME="${{ env.APP_NAME }}-${{ matrix.arch }}.dmg"
+        
+        # Create DMG
+        hdiutil create -srcfolder dmg_temp \
+          -volname "${{ env.APP_NAME }}" \
+          -fs HFS+ \
+          -fsargs "-c c=64,a=16,e=16" \
+          -format UDBZ \
+          "$DMG_NAME"
+        
+        # Verify DMG was created
+        if [ -f "$DMG_NAME" ]; then
+          echo "DMG created successfully: $DMG_NAME"
+          ls -lh "$DMG_NAME"
+          echo "DMG_PATH=$DMG_NAME" >> $GITHUB_OUTPUT
+        else
+          echo "Error: DMG creation failed"
+          exit 1
+        fi
+
+    - name: Upload DMG artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.APP_NAME }}-${{ matrix.arch }}-dmg
+        path: ${{ steps.create_dmg.outputs.DMG_PATH }}
+        retention-days: 30
+
+    - name: Prepare app bundle for upload
+      run: |
+        # Create a predictable directory structure for upload
+        mkdir -p app_bundle
+        cp -R "${{ steps.find_app.outputs.APP_PATH }}" app_bundle/
+        echo "=== App bundle structure for upload ==="
+        ls -la app_bundle/
+        find app_bundle -type f | head -10
+
+    - name: Upload app bundle artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.APP_NAME }}-${{ matrix.arch }}-app
+        path: app_bundle/
+        retention-days: 30
+
+
+
+  release:
+    needs: [build]
+    runs-on: macos-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all DMG artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: "*-dmg"
+        merge-multiple: true
+
+    - name: List downloaded files
+      run: |
+        echo "=== Downloaded files ==="
+        ls -la *.dmg
+        echo "=== File sizes ==="
+        du -h *.dmg
+
+    - name: Set build time
+      id: build_time
+      run: |
+        BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S UTC')
+        echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_OUTPUT
+        echo "构建时间: $BUILD_TIME"
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          *.dmg
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        name: "呼吸练习应用 ${{ github.ref_name }}"
+        body: |
+          ## 🌸 呼吸练习应用 - ${{ github.ref_name }}
+          
+          这是一个简洁优雅的macOS状态栏呼吸练习应用，帮助您在工作中保持专注和放松。
+          
+          ### 📦 下载选项
+          - **breathe-x86_64.dmg** - Intel Mac专用版本
+          - **breathe-arm64.dmg** - Apple Silicon Mac专用版本
+          
+          ### ✨ 功能特色
+          - 🎯 状态栏呼吸动画指导
+          - 🎨 简洁的白色圆圈动画
+          - 📝 实时文字提示（吸气、屏息、呼气）
+          - ⚡ 轻量级，不影响系统性能
+          - 🔄 4秒吸气→2秒屏息→4秒呼气的科学呼吸节奏
+          
+          ### 🚀 安装方法
+          1. 下载对应架构的DMG文件
+          2. 双击DMG文件打开
+          3. 将应用拖拽到Applications文件夹（DMG中有Applications文件夹快捷方式）
+          4. 从启动台或Applications文件夹启动应用
+          
+          ### 💡 使用技巧
+          - 应用会在状态栏显示，不会在Dock中显示
+          - 右键点击状态栏图标可以开始/停止/退出
+          - 跟随动画节奏进行呼吸练习
+          
+          ---
+          
+          **构建时间：** ${{ steps.build_time.outputs.BUILD_TIME }}  
+          **构建版本：** ${{ github.ref_name }}  
+          **提交哈希：** ${{ github.sha }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  summary:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Build Summary
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Architecture | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| x86_64 | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| arm64 | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Artifacts Created" >> $GITHUB_STEP_SUMMARY
+        echo "- ${{ env.APP_NAME }}-x86_64.dmg" >> $GITHUB_STEP_SUMMARY
+        echo "- ${{ env.APP_NAME }}-arm64.dmg" >> $GITHUB_STEP_SUMMARY 
