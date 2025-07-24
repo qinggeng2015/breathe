@@ -9,14 +9,76 @@ import SwiftUI
 import AppKit
 import ImageIO
 
+// MARK: - Breathing Mode Enum
+enum BreathingMode: String, CaseIterable {
+    case deepRelaxation = "深度放松训练"
+    case lightMeditation = "轻松冥想"
+    case quickAdjustment = "快速调节情绪"
+    
+    var inhaleSeconds: Double {
+        switch self {
+        case .deepRelaxation: return 4.0
+        case .lightMeditation: return 3.0
+        case .quickAdjustment: return 2.0
+        }
+    }
+    
+    var holdSeconds: Double {
+        switch self {
+        case .deepRelaxation: return 2.0
+        case .lightMeditation: return 0.0
+        case .quickAdjustment: return 0.0
+        }
+    }
+    
+    var exhaleSeconds: Double {
+        switch self {
+        case .deepRelaxation: return 4.0
+        case .lightMeditation: return 5.0
+        case .quickAdjustment: return 4.0
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .deepRelaxation: return "吸气4秒 → 屏息2秒 → 呼气4秒"
+        case .lightMeditation: return "吸气3秒 → 呼气5秒"
+        case .quickAdjustment: return "吸气2秒 → 呼气4秒"
+        }
+    }
+}
+
+// MARK: - UserDefaults Extension
+extension UserDefaults {
+    private enum Keys {
+        static let selectedBreathingMode = "selectedBreathingMode"
+    }
+    
+    var selectedBreathingMode: BreathingMode {
+        get {
+            if let rawValue = string(forKey: Keys.selectedBreathingMode),
+               let mode = BreathingMode(rawValue: rawValue) {
+                return mode
+            }
+            return .deepRelaxation // 默认模式
+        }
+        set {
+            set(newValue.rawValue, forKey: Keys.selectedBreathingMode)
+        }
+    }
+}
+
 // MARK: - GifAnimationPlayer
 class GifAnimationPlayer: ObservableObject {
     private var animationTimer: Timer?
     private var frames: [NSImage] = []
     private var currentFrame = 0
     private var frameDurations: [Double] = []
+    private var currentMode: BreathingMode = .deepRelaxation
     
     init() {
+        // 从UserDefaults加载上次选择的模式
+        currentMode = UserDefaults.standard.selectedBreathingMode
         loadGifFrames()
     }
     
@@ -24,19 +86,33 @@ class GifAnimationPlayer: ObservableObject {
         createBreathingFrames()
     }
     
+    func setBreathingMode(_ mode: BreathingMode) {
+        currentMode = mode
+        // 保存到UserDefaults
+        UserDefaults.standard.selectedBreathingMode = mode
+        createBreathingFrames()
+    }
+    
     private func createBreathingFrames() {
-        // 创建呼吸动画：吸气4秒 → 屏息2秒 → 呼气4秒
-        let totalFrames = 100  // 10秒总时长 (每帧0.1秒)
-        let inhaleFrames = 40   // 吸气4秒
-        let holdFrames = 20     // 屏息2秒
-        let exhaleFrames = 40   // 呼气4秒
+        // 根据当前模式创建呼吸动画
+        let inhaleSeconds = currentMode.inhaleSeconds
+        let holdSeconds = currentMode.holdSeconds
+        let exhaleSeconds = currentMode.exhaleSeconds
+        
+        let totalSeconds = inhaleSeconds + holdSeconds + exhaleSeconds
+        let totalFrames = Int(totalSeconds * 10)  // 每0.1秒一帧
+        let inhaleFrames = Int(inhaleSeconds * 10)
+        let holdFrames = Int(holdSeconds * 10)
+        let exhaleFrames = Int(exhaleSeconds * 10)
+        
+        frames.removeAll()
+        frameDurations.removeAll()
         
         let maxSize: CGFloat = 20
-        let minSize: CGFloat = 0.5  // 缩小到几乎一个点
+        let minSize: CGFloat = 0.5
         let maxAlpha: CGFloat = 0.9
         let minAlpha: CGFloat = 0.1
         
-        // 增加图标宽度以容纳文字，并给圆圈右侧增加边距
         let iconWidth: CGFloat = 50
         let iconHeight: CGFloat = 24
         
@@ -47,8 +123,8 @@ class GifAnimationPlayer: ObservableObject {
             
             if i < inhaleFrames {
                 // 吸气阶段：从小到大
-                let progress = Double(i) / Double(inhaleFrames - 1)
-                let easeProgress = sin(progress * .pi / 2) // 缓动效果
+                let progress = Double(i) / Double(max(inhaleFrames - 1, 1))
+                let easeProgress = sin(progress * .pi / 2)
                 size = minSize + (maxSize - minSize) * CGFloat(easeProgress)
                 alpha = minAlpha + (maxAlpha - minAlpha) * CGFloat(easeProgress)
                 statusText = "吸气"
@@ -59,7 +135,7 @@ class GifAnimationPlayer: ObservableObject {
                 statusText = "屏息"
             } else {
                 // 呼气阶段：从大到小
-                let progress = Double(i - inhaleFrames - holdFrames) / Double(exhaleFrames - 1)
+                let progress = Double(i - inhaleFrames - holdFrames) / Double(max(exhaleFrames - 1, 1))
                 size = maxSize - (maxSize - minSize) * CGFloat(progress)
                 alpha = maxAlpha - (maxAlpha - minAlpha) * CGFloat(progress)
                 statusText = "呼气"
@@ -71,16 +147,14 @@ class GifAnimationPlayer: ObservableObject {
             let context = NSGraphicsContext.current?.cgContext
             let color = NSColor.white.withAlphaComponent(alpha)
             
-            // 文字绘制在左侧，垂直居中，一直保持可见
             let textAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: NSColor.white // 文字一直保持白色，不跟随透明度变化
+                .foregroundColor: NSColor.white
             ]
             
             let attributedString = NSAttributedString(string: statusText, attributes: textAttributes)
             let textSize = attributedString.size()
             
-            // 文字绘制在左侧，向左移动避免与圆圈重叠
             let textRect = NSRect(
                 x: 0,
                 y: (iconHeight - textSize.height) / 2,
@@ -89,11 +163,9 @@ class GifAnimationPlayer: ObservableObject {
             )
             attributedString.draw(in: textRect)
             
-            // 计算圆圈的中心位置，向右移动2个像素增加与文字的间距
             let circleX = iconWidth - 22 + (20 - size) / 2
-            let circleY = iconHeight / 2
+            let _ = iconHeight / 2
             
-            // 绘制圆圈，位置向左移动以确保完整显示
             context?.setFillColor(color.cgColor)
             let rect = NSRect(
                 x: circleX,
@@ -103,7 +175,6 @@ class GifAnimationPlayer: ObservableObject {
             )
             context?.fillEllipse(in: rect)
             
-            // 添加外环效果（只有在圆圈足够大时才显示）
             if size > 5 {
                 let outerSize = size + 2
                 let outerRect = NSRect(
@@ -142,6 +213,10 @@ class GifAnimationPlayer: ObservableObject {
         animationTimer = nil
     }
     
+    func getCurrentMode() -> BreathingMode {
+        return currentMode
+    }
+    
     deinit {
         stopAnimation()
     }
@@ -152,6 +227,7 @@ class StatusBarManager: ObservableObject {
     private var statusItem: NSStatusItem?
     private var gifPlayer: GifAnimationPlayer?
     private var menu: NSMenu?
+    private var modeMenu: NSMenu?
     
     init() {
         setupStatusBar()
@@ -182,6 +258,13 @@ class StatusBarManager: ObservableObject {
         stopItem.target = self
         menu?.addItem(stopItem)
         
+        // 添加切换模式菜单
+        let modeItem = NSMenuItem(title: "切换模式", action: nil, keyEquivalent: "")
+        modeMenu = NSMenu()
+        setupModeSubmenu()
+        modeItem.submenu = modeMenu
+        menu?.addItem(modeItem)
+        
         menu?.addItem(NSMenuItem.separator())
         
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
@@ -189,6 +272,27 @@ class StatusBarManager: ObservableObject {
         menu?.addItem(quitItem)
         
         statusItem?.menu = menu
+    }
+    
+    private func setupModeSubmenu() {
+        modeMenu?.removeAllItems()
+        
+        let currentMode = gifPlayer?.getCurrentMode() ?? .deepRelaxation
+        
+        for mode in BreathingMode.allCases {
+            let modeItem = NSMenuItem(title: mode.rawValue, action: #selector(switchMode(_:)), keyEquivalent: "")
+            modeItem.target = self
+            modeItem.representedObject = mode
+            
+            // 设置选中态
+            if mode == currentMode {
+                modeItem.state = .on
+            } else {
+                modeItem.state = .off
+            }
+            
+            modeMenu?.addItem(modeItem)
+        }
     }
     
     private func setupGifAnimation() {
@@ -211,6 +315,42 @@ class StatusBarManager: ObservableObject {
     
     @objc private func stopBreathing() {
         gifPlayer?.stopAnimation()
+    }
+    
+    @objc private func switchMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? BreathingMode else { return }
+        
+        // 停止当前动画
+        gifPlayer?.stopAnimation()
+        
+        // 切换到新模式
+        gifPlayer?.setBreathingMode(mode)
+        
+        // 重新开始动画
+        if let statusItem = statusItem {
+            gifPlayer?.startAnimation(for: statusItem)
+        }
+        
+        // 更新菜单选中态
+        updateMenuSelection()
+        
+        print("切换到模式: \(mode.rawValue) - \(mode.description)")
+    }
+    
+    private func updateMenuSelection() {
+        guard let modeMenu = modeMenu else { return }
+        
+        let currentMode = gifPlayer?.getCurrentMode() ?? .deepRelaxation
+        
+        for item in modeMenu.items {
+            if let mode = item.representedObject as? BreathingMode {
+                if mode == currentMode {
+                    item.state = .on
+                } else {
+                    item.state = .off
+                }
+            }
+        }
     }
     
     @objc private func quitApp() {
