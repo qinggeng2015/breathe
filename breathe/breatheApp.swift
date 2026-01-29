@@ -255,19 +255,16 @@ class GifAnimationPlayer: ObservableObject {
 struct AboutView: View {
     var body: some View {
         VStack(spacing: 20) {
-            if #available(macOS 12.0, *) {
-                Image(systemName: "lungs.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+            ZStack {
+                Circle()
+                    .stroke(Color.blue.opacity(0.3), lineWidth: 2)
                     .frame(width: 80, height: 80)
-                    .foregroundColor(.blue)
-            } else {
-                Image(systemName: "wind")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 80, height: 80)
-                    .foregroundColor(.blue)
+                
+                Circle()
+                    .fill(Color.blue.opacity(0.8))
+                    .frame(width: 60, height: 60)
             }
+            .frame(width: 80, height: 80)
             
             Text("Breathe")
                 .font(.title)
@@ -278,7 +275,7 @@ struct AboutView: View {
                 .foregroundColor(.secondary)
             
             Button("GitHub Repository") {
-                if let url = URL(string: "https://github.com/immich-app/immich") {
+                if let url = URL(string: "https://github.com/qinggeng2015/breathe") {
                     NSWorkspace.shared.open(url)
                 }
             }
