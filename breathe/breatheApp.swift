@@ -255,11 +255,19 @@ class GifAnimationPlayer: ObservableObject {
 struct AboutView: View {
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "lungs.fill")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 80, height: 80)
-                .foregroundColor(.blue)
+            if #available(macOS 12.0, *) {
+                Image(systemName: "lungs.fill")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 80, height: 80)
+                    .foregroundColor(.blue)
+            } else {
+                Image(systemName: "wind")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 80, height: 80)
+                    .foregroundColor(.blue)
+            }
             
             Text("Breathe")
                 .font(.title)
@@ -274,7 +282,6 @@ struct AboutView: View {
                     NSWorkspace.shared.open(url)
                 }
             }
-            .buttonStyle(.borderedProminent)
             
             Text("一个简单的呼吸训练应用，\n帮助你放松身心。")
                 .multilineTextAlignment(.center)
