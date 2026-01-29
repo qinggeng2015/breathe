@@ -189,6 +189,7 @@ class GifAnimationPlayer: ObservableObject {
             }
             
             image.unlockFocus()
+            image.isTemplate = true
             frames.append(image)
             frameDurations.append(0.1)
         }
