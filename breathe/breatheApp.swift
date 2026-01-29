@@ -224,9 +224,12 @@ class GifAnimationPlayer: ObservableObject {
             if index == 0 {
                 // 吸气开始 - 滴
                 NSSound(named: "Tink")?.play()
+            } else if holdFrames > 0 && index == inhaleFrames {
+                // 屏息开始 - 滴
+                NSSound(named: "Tink")?.play()
             } else if index == inhaleFrames + holdFrames {
-                // 呼气开始 - 答
-                NSSound(named: "Pop")?.play()
+                // 呼气开始 - 滴
+                NSSound(named: "Tink")?.play()
             }
         }
         
