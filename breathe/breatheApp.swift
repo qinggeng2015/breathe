@@ -52,6 +52,7 @@ enum BreathingMode: String, CaseIterable {
 extension UserDefaults {
     private enum Keys {
         static let selectedBreathingMode = "selectedBreathingMode"
+        static let isSoundEnabled = "isSoundEnabled"
     }
     
     var selectedBreathingMode: BreathingMode {
@@ -66,6 +67,15 @@ extension UserDefaults {
             set(newValue.rawValue, forKey: Keys.selectedBreathingMode)
         }
     }
+    
+    var isSoundEnabled: Bool {
+        get {
+            return bool(forKey: Keys.isSoundEnabled)
+        }
+        set {
+            set(newValue, forKey: Keys.isSoundEnabled)
+        }
+    }
 }
 
 // MARK: - GifAnimationPlayer
@@ -75,6 +85,8 @@ class GifAnimationPlayer: ObservableObject {
     private var currentFrame = 0
     private var frameDurations: [Double] = []
     private var currentMode: BreathingMode = .deepRelaxation
+    private var inhaleFrames: Int = 0
+    private var holdFrames: Int = 0
     
     init() {
         // 从UserDefaults加载上次选择的模式
@@ -101,8 +113,8 @@ class GifAnimationPlayer: ObservableObject {
         
         let totalSeconds = inhaleSeconds + holdSeconds + exhaleSeconds
         let totalFrames = Int(totalSeconds * 10)  // 每0.1秒一帧
-        let inhaleFrames = Int(inhaleSeconds * 10)
-        let holdFrames = Int(holdSeconds * 10)
+        self.inhaleFrames = Int(inhaleSeconds * 10)
+        self.holdFrames = Int(holdSeconds * 10)
         let exhaleFrames = Int(exhaleSeconds * 10)
         
         frames.removeAll()
@@ -205,7 +217,20 @@ class GifAnimationPlayer: ObservableObject {
     private func nextFrame(for statusItem: NSStatusItem) {
         guard !frames.isEmpty, let button = statusItem.button else { return }
         
-        button.image = frames[currentFrame % frames.count]
+        let index = currentFrame % frames.count
+        
+        // 播放声音逻辑
+        if UserDefaults.standard.isSoundEnabled {
+            if index == 0 {
+                // 吸气开始 - 滴
+                NSSound(named: "Tink")?.play()
+            } else if index == inhaleFrames + holdFrames {
+                // 呼气开始 - 答
+                NSSound(named: "Pop")?.play()
+            }
+        }
+        
+        button.image = frames[index]
         currentFrame += 1
     }
     
@@ -258,6 +283,16 @@ class StatusBarManager: ObservableObject {
         let stopItem = NSMenuItem(title: "停止动画", action: #selector(stopBreathing), keyEquivalent: "")
         stopItem.target = self
         menu?.addItem(stopItem)
+        
+        menu?.addItem(NSMenuItem.separator())
+        
+        // 声音开关
+        let soundItem = NSMenuItem(title: "播放声音", action: #selector(toggleSound), keyEquivalent: "")
+        soundItem.target = self
+        soundItem.state = UserDefaults.standard.isSoundEnabled ? .on : .off
+        menu?.addItem(soundItem)
+        
+        menu?.addItem(NSMenuItem.separator())
         
         // 添加切换模式菜单
         let modeItem = NSMenuItem(title: "切换模式", action: nil, keyEquivalent: "")
@@ -316,6 +351,12 @@ class StatusBarManager: ObservableObject {
     
     @objc private func stopBreathing() {
         gifPlayer?.stopAnimation()
+    }
+    
+    @objc private func toggleSound(_ sender: NSMenuItem) {
+        let newState = !UserDefaults.standard.isSoundEnabled
+        UserDefaults.standard.isSoundEnabled = newState
+        sender.state = newState ? .on : .off
     }
     
     @objc private func switchMode(_ sender: NSMenuItem) {
