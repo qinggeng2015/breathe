@@ -251,12 +251,49 @@ class GifAnimationPlayer: ObservableObject {
     }
 }
 
+// MARK: - AboutView
+struct AboutView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lungs.fill")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 80, height: 80)
+                .foregroundColor(.blue)
+            
+            Text("Breathe")
+                .font(.title)
+                .fontWeight(.bold)
+            
+            Text("Version 1.0.0")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Button("GitHub Repository") {
+                if let url = URL(string: "https://github.com/immich-app/immich") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            
+            Text("一个简单的呼吸训练应用，\n帮助你放松身心。")
+                .multilineTextAlignment(.center)
+                .font(.caption)
+                .foregroundColor(.gray)
+                .padding(.top, 10)
+        }
+        .padding(30)
+        .frame(width: 300, height: 350)
+    }
+}
+
 // MARK: - StatusBarManager
 class StatusBarManager: ObservableObject {
     private var statusItem: NSStatusItem?
     private var gifPlayer: GifAnimationPlayer?
     private var menu: NSMenu?
     private var modeMenu: NSMenu?
+    private var aboutWindowController: NSWindowController?
     
     init() {
         setupStatusBar()
@@ -303,6 +340,12 @@ class StatusBarManager: ObservableObject {
         setupModeSubmenu()
         modeItem.submenu = modeMenu
         menu?.addItem(modeItem)
+        
+        menu?.addItem(NSMenuItem.separator())
+        
+        let aboutItem = NSMenuItem(title: "关于", action: #selector(openAboutWindow), keyEquivalent: "")
+        aboutItem.target = self
+        menu?.addItem(aboutItem)
         
         menu?.addItem(NSMenuItem.separator())
         
@@ -380,6 +423,25 @@ class StatusBarManager: ObservableObject {
         updateMenuSelection()
         
         print("切换到模式: \(mode.rawValue) - \(mode.description)")
+    }
+    
+    @objc private func openAboutWindow() {
+        if aboutWindowController == nil {
+            let aboutView = AboutView()
+            let hostingController = NSHostingController(rootView: aboutView)
+            
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "关于 Breathe"
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.center()
+            window.isReleasedWhenClosed = false
+            
+            aboutWindowController = NSWindowController(window: window)
+        }
+        
+        aboutWindowController?.showWindow(nil)
+        aboutWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     
     private func updateMenuSelection() {
