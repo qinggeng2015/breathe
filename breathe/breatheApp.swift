@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import ImageIO
+import AVFoundation
 
 // MARK: - Breathing Mode Enum
 enum BreathingMode: String, CaseIterable {
@@ -87,6 +88,15 @@ class GifAnimationPlayer: ObservableObject {
     private var currentMode: BreathingMode = .deepRelaxation
     private var inhaleFrames: Int = 0
     private var holdFrames: Int = 0
+    private let synthesizer = AVSpeechSynthesizer()
+
+    private func speak(_ text: String) {
+        synthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.rate = 0.45
+        synthesizer.speak(utterance)
+    }
     
     init() {
         // 从UserDefaults加载上次选择的模式
@@ -222,14 +232,11 @@ class GifAnimationPlayer: ObservableObject {
         // 播放声音逻辑
         if UserDefaults.standard.isSoundEnabled {
             if index == 0 {
-                // 吸气开始 - 滴
-                NSSound(named: "Tink")?.play()
+                speak("吸气")
             } else if holdFrames > 0 && index == inhaleFrames {
-                // 屏息开始 - 滴
-                NSSound(named: "Funk")?.play()
+                speak("屏息")
             } else if index == inhaleFrames + holdFrames {
-                // 呼气开始 - 滴
-                NSSound(named: "Pop")?.play()
+                speak("呼气")
             }
         }
         
