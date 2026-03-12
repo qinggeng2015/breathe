@@ -49,11 +49,32 @@ enum BreathingMode: String, CaseIterable {
     }
 }
 
+// MARK: - Phase Sound Enum
+enum PhaseSound: String, CaseIterable {
+    case none   = "关闭"
+    case sound1 = "声音1"
+    case sound2 = "声音2"
+    case sound3 = "声音3"
+    case tts    = "TTS语音"
+}
+
+// MARK: - Phase Sound Selection (ObjC-compatible wrapper)
+class PhaseSoundSelection: NSObject {
+    let phase: String   // "inhale" | "hold" | "exhale"
+    let sound: PhaseSound
+    init(phase: String, sound: PhaseSound) {
+        self.phase = phase
+        self.sound = sound
+    }
+}
+
 // MARK: - UserDefaults Extension
 extension UserDefaults {
     private enum Keys {
         static let selectedBreathingMode = "selectedBreathingMode"
-        static let isSoundEnabled = "isSoundEnabled"
+        static let inhaleSound = "inhaleSound"
+        static let holdSound   = "holdSound"
+        static let exhaleSound = "exhaleSound"
     }
     
     var selectedBreathingMode: BreathingMode {
@@ -62,20 +83,29 @@ extension UserDefaults {
                let mode = BreathingMode(rawValue: rawValue) {
                 return mode
             }
-            return .deepRelaxation // 默认模式
+            return .deepRelaxation
         }
-        set {
-            set(newValue.rawValue, forKey: Keys.selectedBreathingMode)
-        }
+        set { set(newValue.rawValue, forKey: Keys.selectedBreathingMode) }
     }
     
-    var isSoundEnabled: Bool {
-        get {
-            return bool(forKey: Keys.isSoundEnabled)
-        }
-        set {
-            set(newValue, forKey: Keys.isSoundEnabled)
-        }
+    private func phaseSound(forKey key: String, default defaultValue: PhaseSound) -> PhaseSound {
+        if let raw = string(forKey: key), let s = PhaseSound(rawValue: raw) { return s }
+        return defaultValue
+    }
+    
+    var inhaleSound: PhaseSound {
+        get { phaseSound(forKey: Keys.inhaleSound, default: .tts) }
+        set { set(newValue.rawValue, forKey: Keys.inhaleSound) }
+    }
+    
+    var holdSound: PhaseSound {
+        get { phaseSound(forKey: Keys.holdSound, default: .tts) }
+        set { set(newValue.rawValue, forKey: Keys.holdSound) }
+    }
+    
+    var exhaleSound: PhaseSound {
+        get { phaseSound(forKey: Keys.exhaleSound, default: .tts) }
+        set { set(newValue.rawValue, forKey: Keys.exhaleSound) }
     }
 }
 
@@ -89,6 +119,16 @@ class GifAnimationPlayer: ObservableObject {
     private var inhaleFrames: Int = 0
     private var holdFrames: Int = 0
     private let synthesizer = AVSpeechSynthesizer()
+
+    private func playPhaseSound(_ sound: PhaseSound, text: String) {
+        switch sound {
+        case .none:   break
+        case .sound1: NSSound(named: "Tink")?.play()
+        case .sound2: NSSound(named: "Funk")?.play()
+        case .sound3: NSSound(named: "Pop")?.play()
+        case .tts:    speak(text)
+        }
+    }
 
     private func speak(_ text: String) {
         synthesizer.stopSpeaking(at: .immediate)
@@ -230,14 +270,12 @@ class GifAnimationPlayer: ObservableObject {
         let index = currentFrame % frames.count
         
         // 播放声音逻辑
-        if UserDefaults.standard.isSoundEnabled {
-            if index == 0 {
-                speak("吸气")
-            } else if holdFrames > 0 && index == inhaleFrames {
-                speak("屏息")
-            } else if index == inhaleFrames + holdFrames {
-                speak("呼气")
-            }
+        if index == 0 {
+            playPhaseSound(UserDefaults.standard.inhaleSound, text: "吸气")
+        } else if holdFrames > 0 && index == inhaleFrames {
+            playPhaseSound(UserDefaults.standard.holdSound, text: "屏息")
+        } else if index == inhaleFrames + holdFrames {
+            playPhaseSound(UserDefaults.standard.exhaleSound, text: "呼气")
         }
         
         button.image = frames[index]
@@ -304,6 +342,10 @@ class StatusBarManager: ObservableObject {
     private var gifPlayer: GifAnimationPlayer?
     private var menu: NSMenu?
     private var modeMenu: NSMenu?
+    private var soundMenu: NSMenu?
+    private var inhaleSoundMenu: NSMenu?
+    private var holdSoundMenu: NSMenu?
+    private var exhaleSoundMenu: NSMenu?
     private var aboutWindowController: NSWindowController?
     
     init() {
@@ -337,15 +379,16 @@ class StatusBarManager: ObservableObject {
         
         menu?.addItem(NSMenuItem.separator())
         
-        // 声音开关
-        let soundItem = NSMenuItem(title: "播放声音", action: #selector(toggleSound), keyEquivalent: "")
-        soundItem.target = self
-        soundItem.state = UserDefaults.standard.isSoundEnabled ? .on : .off
+        // 播放声音 → 子菜单
+        let soundItem = NSMenuItem(title: "播放声音", action: nil, keyEquivalent: "")
+        soundMenu = NSMenu()
+        setupSoundSubmenu()
+        soundItem.submenu = soundMenu
         menu?.addItem(soundItem)
         
         menu?.addItem(NSMenuItem.separator())
         
-        // 添加切换模式菜单
+        // 切换模式子菜单
         let modeItem = NSMenuItem(title: "切换模式", action: nil, keyEquivalent: "")
         modeMenu = NSMenu()
         setupModeSubmenu()
@@ -367,6 +410,62 @@ class StatusBarManager: ObservableObject {
         statusItem?.menu = menu
     }
     
+    private func setupSoundSubmenu() {
+        soundMenu?.removeAllItems()
+        
+        let phases: [(title: String, phase: String, menu: NSMenu?)] = [
+            ("吸气", "inhale", nil),
+            ("屏息", "hold",   nil),
+            ("呼气", "exhale", nil),
+        ]
+        
+        inhaleSoundMenu = NSMenu()
+        holdSoundMenu   = NSMenu()
+        exhaleSoundMenu = NSMenu()
+        
+        setupPhaseSoundMenu(inhaleSoundMenu!, phase: "inhale", current: UserDefaults.standard.inhaleSound)
+        setupPhaseSoundMenu(holdSoundMenu!,   phase: "hold",   current: UserDefaults.standard.holdSound)
+        setupPhaseSoundMenu(exhaleSoundMenu!, phase: "exhale", current: UserDefaults.standard.exhaleSound)
+        
+        let phaseData: [(String, NSMenu)] = [
+            ("吸气", inhaleSoundMenu!),
+            ("屏息", holdSoundMenu!),
+            ("呼气", exhaleSoundMenu!),
+        ]
+        
+        for (title, submenu) in phaseData {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.submenu = submenu
+            soundMenu?.addItem(item)
+        }
+    }
+    
+    private func setupPhaseSoundMenu(_ menu: NSMenu, phase: String, current: PhaseSound) {
+        menu.removeAllItems()
+        for sound in PhaseSound.allCases {
+            let item = NSMenuItem(title: sound.rawValue, action: #selector(switchPhaseSound(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = PhaseSoundSelection(phase: phase, sound: sound)
+            item.state = (sound == current) ? .on : .off
+            menu.addItem(item)
+        }
+    }
+    
+    private func updateSoundMenuSelection() {
+        updatePhaseSoundMenu(inhaleSoundMenu, phase: "inhale", current: UserDefaults.standard.inhaleSound)
+        updatePhaseSoundMenu(holdSoundMenu,   phase: "hold",   current: UserDefaults.standard.holdSound)
+        updatePhaseSoundMenu(exhaleSoundMenu, phase: "exhale", current: UserDefaults.standard.exhaleSound)
+    }
+    
+    private func updatePhaseSoundMenu(_ menu: NSMenu?, phase: String, current: PhaseSound) {
+        guard let menu = menu else { return }
+        for item in menu.items {
+            if let sel = item.representedObject as? PhaseSoundSelection, sel.phase == phase {
+                item.state = (sel.sound == current) ? .on : .off
+            }
+        }
+    }
+    
     private func setupModeSubmenu() {
         modeMenu?.removeAllItems()
         
@@ -376,14 +475,7 @@ class StatusBarManager: ObservableObject {
             let modeItem = NSMenuItem(title: mode.rawValue, action: #selector(switchMode(_:)), keyEquivalent: "")
             modeItem.target = self
             modeItem.representedObject = mode
-            
-            // 设置选中态
-            if mode == currentMode {
-                modeItem.state = .on
-            } else {
-                modeItem.state = .off
-            }
-            
+            modeItem.state = (mode == currentMode) ? .on : .off
             modeMenu?.addItem(modeItem)
         }
     }
@@ -410,29 +502,28 @@ class StatusBarManager: ObservableObject {
         gifPlayer?.stopAnimation()
     }
     
-    @objc private func toggleSound(_ sender: NSMenuItem) {
-        let newState = !UserDefaults.standard.isSoundEnabled
-        UserDefaults.standard.isSoundEnabled = newState
-        sender.state = newState ? .on : .off
+    @objc private func switchPhaseSound(_ sender: NSMenuItem) {
+        guard let sel = sender.representedObject as? PhaseSoundSelection else { return }
+        switch sel.phase {
+        case "inhale": UserDefaults.standard.inhaleSound = sel.sound
+        case "hold":   UserDefaults.standard.holdSound   = sel.sound
+        case "exhale": UserDefaults.standard.exhaleSound = sel.sound
+        default: break
+        }
+        updateSoundMenuSelection()
     }
     
     @objc private func switchMode(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? BreathingMode else { return }
         
-        // 停止当前动画
         gifPlayer?.stopAnimation()
-        
-        // 切换到新模式
         gifPlayer?.setBreathingMode(mode)
         
-        // 重新开始动画
         if let statusItem = statusItem {
             gifPlayer?.startAnimation(for: statusItem)
         }
         
-        // 更新菜单选中态
         updateMenuSelection()
-        
         print("切换到模式: \(mode.rawValue) - \(mode.description)")
     }
     
@@ -462,11 +553,7 @@ class StatusBarManager: ObservableObject {
         
         for item in modeMenu.items {
             if let mode = item.representedObject as? BreathingMode {
-                if mode == currentMode {
-                    item.state = .on
-                } else {
-                    item.state = .off
-                }
+                item.state = (mode == currentMode) ? .on : .off
             }
         }
     }
