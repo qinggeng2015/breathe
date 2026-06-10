@@ -9,6 +9,7 @@ import SwiftUI
 import AppKit
 import ImageIO
 import AVFoundation
+import ServiceManagement
 
 // MARK: - Breathing Mode Enum
 enum BreathingMode: String, CaseIterable {
@@ -83,6 +84,46 @@ class PhaseSoundSelection: NSObject {
     init(phase: String, sound: PhaseSound) {
         self.phase = phase
         self.sound = sound
+    }
+}
+
+// MARK: - Launch At Login
+enum LaunchAtLoginManager {
+    static var isSupported: Bool {
+        if #available(macOS 13.0, *) {
+            return true
+        }
+        return false
+    }
+
+    static var isEnabled: Bool {
+        if #available(macOS 13.0, *) {
+            return SMAppService.mainApp.status == .enabled
+        }
+        return false
+    }
+
+    static var requiresApproval: Bool {
+        if #available(macOS 13.0, *) {
+            return SMAppService.mainApp.status == .requiresApproval
+        }
+        return false
+    }
+
+    static func setEnabled(_ enabled: Bool) throws {
+        if #available(macOS 13.0, *) {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        }
+    }
+
+    static func openLoginItemsSettings() {
+        if #available(macOS 13.0, *) {
+            SMAppService.openSystemSettingsLoginItems()
+        }
     }
 }
 
@@ -353,7 +394,7 @@ struct AboutView: View {
 }
 
 // MARK: - StatusBarManager
-class StatusBarManager: ObservableObject {
+class StatusBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var gifPlayer: GifAnimationPlayer?
     private var menu: NSMenu?
@@ -363,9 +404,11 @@ class StatusBarManager: ObservableObject {
     private var inhaleSoundMenu: NSMenu?
     private var holdSoundMenu: NSMenu?
     private var exhaleSoundMenu: NSMenu?
+    private var launchAtLoginItem: NSMenuItem?
     private var aboutWindowController: NSWindowController?
     
-    init() {
+    override init() {
+        super.init()
         setupStatusBar()
         setupGifAnimation()
     }
@@ -385,6 +428,7 @@ class StatusBarManager: ObservableObject {
     
     private func setupMenu() {
         menu = NSMenu()
+        menu?.delegate = self
         
         let startItem = NSMenuItem(title: "开始呼吸", action: #selector(startBreathing), keyEquivalent: "")
         startItem.target = self
@@ -414,6 +458,15 @@ class StatusBarManager: ObservableObject {
         
         menu?.addItem(NSMenuItem.separator())
         
+        let launchAtLoginItem = NSMenuItem(title: "开机启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        launchAtLoginItem.isEnabled = LaunchAtLoginManager.isSupported
+        self.launchAtLoginItem = launchAtLoginItem
+        menu?.addItem(launchAtLoginItem)
+        updateLaunchAtLoginMenuItem()
+
+        menu?.addItem(NSMenuItem.separator())
+
         let aboutItem = NSMenuItem(title: "关于", action: #selector(openAboutWindow), keyEquivalent: "")
         aboutItem.target = self
         menu?.addItem(aboutItem)
@@ -425,6 +478,10 @@ class StatusBarManager: ObservableObject {
         menu?.addItem(quitItem)
         
         statusItem?.menu = menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        updateLaunchAtLoginMenuItem()
     }
     
     private func setupSoundSubmenu() {
@@ -558,6 +615,26 @@ class StatusBarManager: ObservableObject {
         updateMenuSelection()
         print("切换到模式: \(mode.rawValue) - \(mode.description)")
     }
+
+    @objc private func toggleLaunchAtLogin() {
+        if LaunchAtLoginManager.requiresApproval {
+            showLaunchAtLoginApprovalAlert()
+            updateLaunchAtLoginMenuItem()
+            return
+        }
+
+        do {
+            try LaunchAtLoginManager.setEnabled(!LaunchAtLoginManager.isEnabled)
+        } catch {
+            showLaunchAtLoginError(error)
+        }
+
+        updateLaunchAtLoginMenuItem()
+
+        if LaunchAtLoginManager.requiresApproval {
+            showLaunchAtLoginApprovalAlert()
+        }
+    }
     
     @objc private func openAboutWindow() {
         if aboutWindowController == nil {
@@ -587,6 +664,36 @@ class StatusBarManager: ObservableObject {
             if let mode = item.representedObject as? BreathingMode {
                 item.state = (mode == currentMode) ? .on : .off
             }
+        }
+    }
+
+    private func updateLaunchAtLoginMenuItem() {
+        launchAtLoginItem?.state = LaunchAtLoginManager.isEnabled ? .on : .off
+    }
+
+    private func showLaunchAtLoginError(_ error: Error) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "无法修改开机启动设置"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    private func showLaunchAtLoginApprovalAlert() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "需要在系统设置中允许开机启动"
+        alert.informativeText = "请在“系统设置 > 通用 > 登录项”中允许 Breathe。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "取消")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            LaunchAtLoginManager.openLoginItemsSettings()
         }
     }
     
